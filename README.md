@@ -1,5 +1,7 @@
 # Nachweis-Service
 
+[![CI](https://github.com/IlhanDiler/nachweis-service/actions/workflows/ci.yml/badge.svg)](https://github.com/IlhanDiler/nachweis-service/actions/workflows/ci.yml)
+
 Ein Backend-Service, der **digitale Nachweise** (z. B. eine Versicherungsbescheinigung) als
 **signierte Credentials** ausstellt und prüft. Eine Behörde stellt den Nachweis aus, eine
 prüfende Stelle kann anschließend Echtheit, Gültigkeit und Aussteller verifizieren, ohne
@@ -17,6 +19,10 @@ den Aussteller erneut anfragen zu müssen.
 Ein ausgestellter Nachweis enthält Name, Geburtsdatum und eine fiktive Versichertennummer
 sowie die Standard-Claims `iss` (Aussteller), `iat` (ausgestellt am), `exp` (gültig bis)
 und `jti` (eindeutige ID).
+
+Zu jedem ausgestellten Nachweis werden in PostgreSQL nur **Metadaten** gespeichert
+(ID = `jti`, Typ, Ausstellungs- und Ablaufdatum, Status). Name, Geburtsdatum und
+Versichertennummer stehen ausschließlich im signierten JWT, das der Inhaber erhält.
 
 ## Architektur
 
@@ -40,7 +46,7 @@ und `jti` (eindeutige ID).
                           │  5. Aussteller                │
                           └───────────────────────────────┘
                                          │
-                          PostgreSQL (Docker, angebunden – Speicherung folgt)
+                          PostgreSQL (Docker) – Metadaten, Schema per Flyway
 ```
 
 Code-Struktur (`src/main/java/de/diler/nachweis/credential`):
@@ -49,6 +55,8 @@ Code-Struktur (`src/main/java/de/diler/nachweis/credential`):
 - `CredentialController` / `CredentialService` – Ausstellen
 - `VerificationController` / `VerificationService` – Prüfen
 - `CredentialRequest`, `VerifyRequest`, `VerificationResult` – Ein- und Ausgabedaten
+- `CredentialRecord` / `CredentialRepository` – gespeicherte Metadaten (JPA)
+- `src/main/resources/db/migration` – Datenbankschema als Flyway-Migration
 
 ## Technik
 
@@ -97,7 +105,10 @@ Bei einem manipulierten, abgelaufenen oder fremden Nachweis ist `valid` `false` 
 
 Die Unit-Tests in `VerificationServiceTest` decken ab: gültiger Nachweis, manipulierter
 Inhalt, abgelaufener Nachweis, falscher Aussteller, fremder Schlüssel und ungültiges Format.
-Der Kontext-Test startet über Testcontainers eine echte PostgreSQL – dafür muss Docker laufen.
+`CredentialPersistenceTest` prüft gegen eine echte PostgreSQL (Testcontainers), dass die
+Metadaten gespeichert werden – dafür muss Docker laufen.
+
+Bei jedem Push führt eine GitHub Action (`.github/workflows/ci.yml`) `mvnw verify` aus.
 
 ## Entscheidungen
 
@@ -126,15 +137,23 @@ Die prüfende Stelle erfährt so in einer Antwort alles, was nicht stimmt (z. B.
 **Warum nimbus-jose-jwt?**
 Weit verbreitete, gut gepflegte Bibliothek, die auch Spring Security intern nutzt.
 
+**Warum nur Metadaten in der Datenbank?**
+Datensparsamkeit (Art. 5 DSGVO): Für Widerruf und Nachvollziehbarkeit reichen ID, Typ,
+Zeitraum und Status. Eine Kopie der personenbezogenen Daten beim Aussteller wäre ein
+unnötiges Risiko.
+
+**Warum Flyway statt automatischer Schema-Erzeugung durch Hibernate?**
+Das Schema ist versioniert und nachvollziehbar im Repository. Hibernate prüft beim Start nur
+(`ddl-auto=validate`), ob Entity und Tabelle zusammenpassen.
+
 ## Bekannte Einschränkungen und nächste Schritte
 
 - Der Signaturschlüssel wird beim Start **im Speicher erzeugt**. Nach einem Neustart können
   ältere Nachweise nicht mehr geprüft werden. Geplant: persistenter Schlüssel und
   Schlüsselrotation über mehrere `kid`.
-- Speicherung der Nachweis-**Metadaten** (ID, Typ, Ausstellungs-/Ablaufdatum, Status) in
-  PostgreSQL per Flyway-Migration – bewusst ohne Kopie der personenbezogenen Daten.
-- Widerruf (`POST /api/credentials/{id}/revoke`) mit Statusliste.
+- Widerruf (`POST /api/credentials/{id}/revoke`) mit Statusliste – das Feld `status`
+  ist in der Datenbank bereits vorbereitet.
 - `GET /.well-known/jwks.json` zur Veröffentlichung des öffentlichen Schlüssels.
 - Einheitliche Fehlerantworten mit `ProblemDetail`, OpenAPI/Swagger-Dokumentation.
-- Audit-Log, Integrationstests gegen PostgreSQL, CI mit GitHub Actions.
+- Audit-Log.
 - Selective Disclosure (SD-JWT), z. B. nur „über 18: ja“ statt Geburtsdatum.
