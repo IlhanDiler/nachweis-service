@@ -6,6 +6,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -33,6 +34,15 @@ public class CredentialRecord {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private CredentialStatus status;
+
+    @Column(name = "revoked_at")
+    private Instant revokedAt;
+
+    // Optimistic Locking: Hibernate erhoeht die Version bei jedem Update und bricht ab,
+    // wenn ein anderer Vorgang den Datensatz inzwischen geaendert hat.
+    @Version
+    @Column(nullable = false)
+    private long version;
 
     protected CredentialRecord() {
         // fuer JPA
@@ -64,5 +74,21 @@ public class CredentialRecord {
 
     public CredentialStatus getStatus() {
         return status;
+    }
+
+    public Instant getRevokedAt() {
+        return revokedAt;
+    }
+
+    public boolean isRevoked() {
+        return status == CredentialStatus.REVOKED;
+    }
+
+    public void revoke(Instant when) {
+        if (isRevoked()) {
+            throw new IllegalStateException("Nachweis ist bereits widerrufen");
+        }
+        this.status = CredentialStatus.REVOKED;
+        this.revokedAt = when;
     }
 }
