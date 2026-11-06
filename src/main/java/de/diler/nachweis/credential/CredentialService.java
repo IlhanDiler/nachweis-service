@@ -7,6 +7,8 @@ import com.nimbusds.jose.crypto.ECDSASigner;
 import com.nimbusds.jose.jwk.ECKey;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import de.diler.nachweis.audit.AuditAction;
+import de.diler.nachweis.audit.AuditService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,14 +27,17 @@ public class CredentialService {
 
     private final ECKey signingKey;
     private final CredentialRepository credentialRepository;
+    private final AuditService auditService;
 
-    public CredentialService(ECKey signingKey, CredentialRepository credentialRepository) {
+    public CredentialService(ECKey signingKey, CredentialRepository credentialRepository,
+                             AuditService auditService) {
         this.signingKey = signingKey;
         this.credentialRepository = credentialRepository;
+        this.auditService = auditService;
     }
 
     @Transactional
-    public String issue(CredentialRequest request) throws JOSEException {
+    public String issue(CredentialRequest request, String actor) throws JOSEException {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         Instant expiresAt = now.plus(VALIDITY);
@@ -55,6 +60,22 @@ public class CredentialService {
         jwt.sign(new ECDSASigner(signingKey));
 
         credentialRepository.save(new CredentialRecord(id, TYPE, now, expiresAt));
+        auditService.log(AuditAction.ISSUED, id, actor, TYPE);
         return jwt.serialize();
+    }
+
+    @Transactional
+    public CredentialRecord revoke(UUID id, String actor) {
+        CredentialRecord record = credentialRepository.findById(id)
+                .orElseThrow(() -> new CredentialNotFoundException(id));
+        if (record.isRevoked()) {
+            throw new CredentialAlreadyRevokedException(id);
+        }
+        record.revoke(Instant.now().truncatedTo(ChronoUnit.MICROS));
+        // saveAndFlush, damit ein Versionskonflikt (Optimistic Locking) noch in dieser
+        // Methode auffaellt und nicht erst beim Commit.
+        CredentialRecord saved = credentialRepository.saveAndFlush(record);
+        auditService.log(AuditAction.REVOKED, id, actor, null);
+        return saved;
     }
 }
