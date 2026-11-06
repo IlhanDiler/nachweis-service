@@ -20,6 +20,7 @@ import java.util.Date;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 class VerificationServiceTest {
 
@@ -30,7 +31,7 @@ class VerificationServiceTest {
     @BeforeEach
     void setUp() throws JOSEException {
         signingKey = new ECKeyGenerator(Curve.P_256).keyID("test-key").generate();
-        credentialService = new CredentialService(signingKey);
+        credentialService = new CredentialService(signingKey, mock(CredentialRepository.class));
         verificationService = new VerificationService(signingKey);
     }
 
